@@ -1,0 +1,194 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-in",
+        "options": {}
+      },
+      "name": "Webhook WhatsApp Entrada",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 280]
+    },
+    {
+      "parameters": {
+        "functionCode": "const message = $json.body.message.text;\nconst senderId = $json.body.message.from;\n\n// Simula a extração do nome do cliente se for a primeira interação ou se o agente perguntou\nlet clientName = null;\nif (message.toLowerCase().includes('meu nome é')) {\n  const match = message.match(/meu nome é (.*)/i);\n  if (match && match[1]) {\n    clientName = match[1].trim();\n  }\n}\n\nreturn [{\n  json: {\n    senderId: senderId,\n    message: message,\n    clientName: clientName,\n    // Adicione aqui outros dados que você extrairia do webhook do WhatsApp\n    // Ex: tipo de mensagem, mídia, etc.\n  }\n}];"
+      },
+      "name": "Extrair Dados WhatsApp",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [440, 280]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "get",
+        "table": "clientes",
+        "filters": [
+          {
+            "field": "whatsapp_id",
+            "operator": "equalTo",
+            "value": "={{$json.senderId}}"
+          }
+        ],
+        "options": {}
+      },
+      "name": "Consultar Cliente Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [640, 280],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": [
+          {
+            "type": "boolean",
+            "value1": "={{$node[\"Consultar Cliente Supabase\"].json[\"data\"].length > 0}}",
+            "value2": true
+          }
+        ]
+      },
+      "name": "Cliente Existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [840, 280]
+    },
+    {
+      "parameters": {
+        "resource": "table",
+        "operation": "insert",
+        "table": "clientes",
+        "data": "={\n  \"whatsapp_id\": $json.senderId,\n  \"nome\": $json.clientName || \"Desconhecido\",\n  \"tipo\": \"avulso\",\n  \"data_cadastro\": \"={{new Date().toISOString()}}\"\n}",
+        "options": {}
+      },
+      "name": "Registrar Novo Cliente Supabase",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [1040, 400],
+      "credentials": {
+        "supabaseApi": {
+          "id": "YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const clientData = $node[\"Consultar Cliente Supabase\"].json.data[0];\nconst message = $node[\"Extrair Dados WhatsApp\"].json.message;\nconst senderId = $node[\"Extrair Dados WhatsApp\"].json.senderId;\n\nlet prompt = `Você é um assistente de vendas de autopeças chamado João, muito amistoso, prestativo e cordial. Seu objetivo é atender o cliente de forma humanizada, nada robótica. Sempre pergunte o modelo e ano do veículo para garantir a compatibilidade da peça, mas continue o atendimento mesmo sem essa informação. Você também pode sugerir peças paralelas ou alternativas compatíveis.\\n\\nInformações do Cliente: ${clientData ? `Nome: ${clientData.nome}, Tipo: ${clientData.tipo}` : 'Novo Cliente'}\\n\\nÚltima Mensagem do Cliente: ${message}\\n\\nCom base nas informações acima, qual seria a melhor resposta para o cliente? Se for a primeira interação, comece perguntando o nome do cliente.`;\n\nreturn [{\n  json: {\n    prompt: prompt,\n    senderId: senderId,\n    clientData: clientData || null,\n    message: message\n  }\n}];"
+      },
+      "name": "Preparar Prompt para Claude",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1240, 280]
+    },
+    {
+      "parameters": {
+        "url": "YOUR_LOVABLE_PRO_CLAUDE_API_ENDPOINT",
+        "method": "POST",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "={{$json.prompt}}"
+            },
+            {
+              "name": "senderId",
+              "value": "={{$json.senderId}}"
+            }
+          ]
+        },
+        "options": {
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_LOVABLE_PRO_API_KEY"
+            }
+          ]
+        }
+      },
+      "name": "Chamar Claude (Lovable Pro)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1440, 280]
+    },
+    {
+      "parameters": {
+        "functionCode": "const claudeResponse = $node[\"Chamar Claude (Lovable Pro)\"].json.body.response;\nconst originalMessage = $node[\"Preparar Prompt para Claude\"].json.message;\n\n// Simula a extração da peça, modelo e ano da resposta do Claude ou da mensagem original\nlet requestedPart = null;\nlet vehicleModel = null;\nlet vehicleYear = null;\n\n// Lógica simplificada para protótipo\nif (originalMessage.toLowerCase().includes('pastilha de freio')) {\n  requestedPart = 'Pastilha de Freio Dianteira';\n}\nif (originalMessage.toLowerCase().includes('filtro de oleo')) {\n  requestedPart = 'Filtro de Óleo';\n}\nif (originalMessage.toLowerCase().includes('amortecedor')) {\n  requestedPart = 'Amortecedor Traseiro';\n}\n\nif (originalMessage.toLowerCase().includes('palio')) {\n  vehicleModel = 'Fiat Palio';\n  vehicleYear = '2010-2015';\n}\nif (originalMessage.toLowerCase().includes('gol')) {\n  vehicleModel = 'VW Gol G5';\n  vehicleYear = '2008-2012';\n}\n\nreturn [{\n  json: {\n    claudeResponse: claudeResponse,\n    requestedPart: requestedPart,\n    vehicleModel: vehicleModel,\n    vehicleYear: vehicleYear,\n    senderId: $node[\"Preparar Prompt para Claude\"].json.senderId,\n    clientData: $node[\"Preparar Prompt para Claude\"].json.clientData\n  }\n}];"
+      },
+      "name": "Processar Resposta Claude",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1640, 280]
+    },
+    {
+      "parameters": {
+        "functionCode": "const requestedPart = $json.requestedPart;\nconst vehicleModel = $json.vehicleModel;\nconst vehicleYear = $json.vehicleYear;\n\nconst simulatedStock = [\n  {\n    \"id_peca\": \"P001\",\n    \"nome_peca\": \"Pastilha de Freio Dianteira\",\n    \"marca\": \"Bosch\",\n    \"compatibilidade\": [\"Fiat Palio 2010-2015\", \"Fiat Siena 2010-2015\", \"VW Gol G5 2008-2012\"],\n    \"disponibilidade\": 10,\n    \"preco\": 120.50,\n    \"url_foto\": \"https://i.imgur.com/example1.jpg\",\n    \"tipo_peca\": \"Original\",\n    \"alternativas_compativeis\": [\"P002\", \"P003\"]\n  },\n  {\n    \"id_peca\": \"P002\",\n    \"nome_peca\": \"Pastilha de Freio Dianteira\",\n    \"marca\": \"Fras-le\",\n    \"compatibilidade\": [\"Fiat Palio 2010-2015\", \"Fiat Siena 2010-2015\", \"VW Gol G5 2008-2012\"],\n    \"disponibilidade\": 5,\n    \"preco\": 85.00,\n    \"url_foto\": \"https://i.imgur.com/example2.jpg\",\n    \"tipo_peca\": \"Paralela de Qualidade\",\n    \"alternativas_compativeis\": [\"P001\", \"P003\"]\n  },\n  {\n    \"id_peca\": \"P003\",\n    \"nome_peca\": \"Pastilha de Freio Dianteira\",\n    \"marca\": \"Paralela Genérica\",\n    \"compatibilidade\": [\"Fiat Palio 2010-2015\", \"Fiat Siena 2010-2015\", \"VW Gol G5 2008-2012\"],\n    \"disponibilidade\": 20,\n    \"preco\": 50.00,\n    \"url_foto\": \"https://i.imgur.com/example3.jpg\",\n    \"tipo_peca\": \"Paralela Econômica\",\n    \"alternativas_compativeis\": [\"P001\", \"P002\"]\n  },\n  {\n    \"id_peca\": \"P004\",\n    \"nome_peca\": \"Filtro de Óleo\",\n    \"marca\": \"Mann Filter\",\n    \"compatibilidade\": [\"Ford Ka 2015-2020\", \"Ford Fiesta 2015-2020\"],\n    \"disponibilidade\": 15,\n    \"preco\": 45.00,\n    \"url_foto\": \"https://i.imgur.com/example4.jpg\",\n    \"tipo_peca\": \"Original\",\n    \"alternativas_compativeis\": []\n  },\n  {\n    \"id_peca\": \"P005\",\n    \"nome_peca\": \"Amortecedor Traseiro\",\n    \"marca\": \"Cofap\",\n    \"compatibilidade\": [\"Chevrolet Onix 2013-2019\", \"Chevrolet Prisma 2013-2019\"],\n    \"disponibilidade\": 8,\n    \"preco\": 280.00,\n    \"url_foto\": \"https://i.imgur.com/example5.jpg\",\n    \"tipo_peca\": \"Original\",\n    \"alternativas_compativeis\": []\n  }\n];\n\nlet foundParts = [];\nif (requestedPart) {\n  foundParts = simulatedStock.filter(part => \n    part.nome_peca.toLowerCase().includes(requestedPart.toLowerCase()) &&\n    (!vehicleModel || part.compatibilidade.some(comp => comp.toLowerCase().includes(vehicleModel.toLowerCase()))) &&\n    (!vehicleYear || part.compatibilidade.some(comp => comp.includes(vehicleYear)))\n  );\n}\n\nreturn [{\n  json: {\n    ...$json,\n    foundParts: foundParts\n  }\n}];"
+      },
+      "name": "Simular Busca Estoque",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1840, 280]
+    },
+    {
+      "parameters": {
+        "functionCode": "const claudeResponse = $json.claudeResponse;\nconst foundParts = $json.foundParts;\nconst senderId = $json.senderId;\nconst clientData = $json.clientData;\n\nlet finalMessage = claudeResponse;\nlet photos = [];\n\nif (foundParts.length > 0) {\n  finalMessage += \"\\n\\nEncontrei as seguintes opções para você:\";\n  foundParts.forEach(part => {\n    finalMessage += `\\n- ${part.nome_peca} (${part.marca}) - R$ ${part.preco.toFixed(2)} - Disponibilidade: ${part.disponibilidade > 0 ? part.disponibilidade + ' em estoque' : 'Esgotado'}. Tipo: ${part.tipo_peca}.`;\n    if (part.url_foto) {\n      photos.push(part.url_foto);\n    }\n  });\n\n  // Lógica para sugerir alternativas\n  const firstPart = foundParts[0];\n  if (firstPart.alternativas_compativeis && firstPart.alternativas_compativeis.length > 0) {\n    finalMessage += \"\\n\\nTambém posso sugerir algumas alternativas compatíveis:\";\n    firstPart.alternativas_compativeis.forEach(altId => {\n      const altPart = $node[\"Simular Busca Estoque\"].json.simulatedStock.find(p => p.id_peca === altId); // Acessa o estoque simulado para detalhes\n      if (altPart) {\n        finalMessage += `\\n- ${altPart.nome_peca} (${altPart.marca}) - R$ ${altPart.preco.toFixed(2)} (${altPart.tipo_peca})`;\n      }\n    });\n  }\n} else if ($json.requestedPart) {\n  finalMessage += \"\\n\\nDesculpe, não encontrei a peça que você procura em nosso estoque no momento. Posso verificar outras opções ou marcas para você?\";\n}\n\n// Lógica para cobrança (exemplo: se a mensagem do Claude indicar uma compra)\nlet offerPayment = false;\nif (claudeResponse.toLowerCase().includes('gostaria de finalizar a compra') || claudeResponse.toLowerCase().includes('posso gerar o link de pagamento')) {\n  offerPayment = true;\n}\n\nreturn [{\n  json: {\n    senderId: senderId,\n    finalMessage: finalMessage,\n    photos: photos,\n    offerPayment: offerPayment,\n    clientData: clientData\n  }\n}];"
+      },
+      "name": "Gerar Resposta Final com Fotos",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [2040, 280]
+    },
+    {
+      "parameters": {
+        "conditions": [
+          {
+            "type": "boolean",
+            "value1": "={{$json.offerPayment}}",
+            "value2": true
+          }
+        ]
+      },
+      "name": "Oferecer Pagamento?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2240, 280]
+    },
+    {
+      "parameters": {
+        "url": "https://api.mercadopago.com/checkout/preferences",
+        "method": "POST",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "items",
+              "value": "=[{\n  \"title\": \"Peça de Automóvel\",\n  \"quantity\": 1,\n  \"unit_price\": 100.00 // Valor simulado, você ajustaria com o preço da peça\n}]"
+            },
+            {
+              "name": "payer",
+              "value": "={\n  \"name\": \"{{$json.clientData.nome || 'Cliente'}} \"\n}"
+            },
+            {
+              "name": "back_urls",
+              "value": "{\n  \"success\": \"https://your-success-url.com\",\n  \"pending\": \"https://your-pending-url.com\",\n  \"failure\": \"https://your-failure-url.com\"\n}"
+            },
+            {
+              "name": "auto_return",
+              "value": "approved"
+            },
+            {
+              "name": "notification_url",
+              "value": "YOUR_MERCADO_PAGO_NOTIFICATION_WEBHOOK_URL"
+            }
+          ]
+        },
+        "options": {
+          "headers
+
+
